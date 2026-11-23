@@ -67,4 +67,3 @@ opens the uploaded file unchanged and does not draw.
 - **Slow / Normal / Fast**: adjust mouse movement and pauses between strokes.
 - **Draft / Standard / High**: set the maximum analysis image dimension and
   texture spacing. Higher quality can take longer to plan and draw.
-=======
