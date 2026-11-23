@@ -6,14 +6,12 @@ enable_dpi_awareness()
 
 import queue
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from PIL import Image, ImageOps, ImageTk
 
 from .config import (
-    EXACT_IMAGE_MODE,
     QUALITY,
-    SKETCH_MODE,
     SPEEDS,
     STYLES,
 )
@@ -53,12 +51,10 @@ class App(tk.Tk):
 
         options = ttk.Frame(self)
         options.pack(fill="x", **padding)
-        self.mode_v = tk.StringVar(value=SKETCH_MODE)
         self.style_v = tk.StringVar(value="Realistic Pencil Portrait")
         self.speed_v = tk.StringVar(value="Normal")
         self.quality_v = tk.StringVar(value="Standard")
         for row, (label, variable, values) in enumerate([
-            ("Mode", self.mode_v, [SKETCH_MODE, EXACT_IMAGE_MODE]),
             ("Style", self.style_v, list(STYLES)),
             ("Speed", self.speed_v, list(SPEEDS)),
             ("Quality", self.quality_v, list(QUALITY)),
@@ -69,25 +65,15 @@ class App(tk.Tk):
                 options, textvariable=variable, values=values,
                 state="readonly")
             combo.grid(row=row, column=1, sticky="ew")
-            if label == "Mode":
-                combo.bind(
-                    "<<ComboboxSelected>>",
-                    lambda event: self._mode_changed())
-            else:
-                combo.bind(
-                    "<<ComboboxSelected>>",
-                    lambda event: self._replan())
+            combo.bind(
+                "<<ComboboxSelected>>",
+                lambda event: self._replan())
         options.columnconfigure(1, weight=1)
 
         buttons = ttk.Frame(self)
         buttons.pack(fill="x", **padding)
-        start_text = (
-            "Open Image in Paint"
-            if self.mode_v.get() == EXACT_IMAGE_MODE
-            else "▶  Start Drawing"
-        )
         self.b_start = ttk.Button(
-            buttons, text=start_text, command=self._start)
+            buttons, text="▶  Start Drawing", command=self._start)
         self.b_pause = ttk.Button(
             buttons, text="⏸  Pause", command=self._pause, state="disabled")
         self.b_resume = ttk.Button(
@@ -114,6 +100,80 @@ class App(tk.Tk):
 
         self.after(80, self._poll)
 
+    def _ask_yes_no(self, title, prompt):
+        result = {"value": False}
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.configure(padx=18, pady=14)
+
+        ttk.Label(
+            dialog,
+            text=prompt,
+            wraplength=430,
+            justify="left",
+        ).pack(fill="x", pady=(0, 16))
+
+        buttons = ttk.Frame(dialog)
+        buttons.pack(fill="x", pady=(4, 0))
+
+        def accept():
+            result["value"] = True
+            dialog.destroy()
+
+        def decline():
+            result["value"] = False
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Yes", width=10, command=accept).pack(
+            side="left")
+        ttk.Button(buttons, text="No", width=10, command=decline).pack(
+            side="right")
+
+        dialog.bind("<Return>", lambda event: accept())
+        dialog.bind("<Escape>", lambda event: decline())
+        dialog.protocol("WM_DELETE_WINDOW", decline)
+
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+        dialog.focus_force()
+        self.wait_window(dialog)
+        return result["value"]
+
+    def _show_message(self, title, prompt, kind="error"):
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.configure(padx=18, pady=14)
+
+        ttk.Label(
+            dialog,
+            text=prompt,
+            wraplength=430,
+            justify="left",
+        ).pack(fill="x", pady=(0, 16))
+
+        def close():
+            dialog.destroy()
+
+        ttk.Button(dialog, text="OK", width=10, command=close).pack(anchor="e")
+        dialog.bind("<Return>", lambda event: close())
+        dialog.bind("<Escape>", lambda event: close())
+        dialog.protocol("WM_DELETE_WINDOW", close)
+
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+        dialog.focus_force()
+        self.wait_window(dialog)
+
     def _pick(self):
         path = filedialog.askopenfilename(
             filetypes=[("Images", "*.jpg *.jpeg *.png *.bmp *.webp")])
@@ -124,7 +184,7 @@ class App(tk.Tk):
                 image = ImageOps.exif_transpose(source)
                 image.load()
         except Exception as exc:
-            messagebox.showerror("Error", f"Cannot open image:\n{exc}")
+            self._show_message("Error", f"Cannot open image:\n{exc}")
             return
         self.image_path = path
         image.thumbnail((500, 320))
@@ -132,34 +192,8 @@ class App(tk.Tk):
         self.preview.config(image=self._tkimg, text="")
         self._replan()
 
-    def _mode_changed(self):
-        if self.mode_v.get() == EXACT_IMAGE_MODE:
-            self.b_start.config(text="Open Image in Paint")
-        else:
-            self.b_start.config(text="▶  Start Drawing")
-        self._replan()
-
     def _replan(self):
         if not self.image_path:
-            return
-        if self.mode_v.get() == EXACT_IMAGE_MODE:
-            try:
-                with Image.open(self.image_path) as source:
-                    width, height = source.size
-                    image = ImageOps.exif_transpose(source)
-                    image.load()
-                image.thumbnail((500, 320))
-                self._tkimg = ImageTk.PhotoImage(image)
-                self.preview.config(image=self._tkimg, text="")
-                self.strokes = None
-                self.stroke_dim = None
-                self.info_l.config(
-                    text=f"Paint canvas: {width}×{height} original pixels.")
-                self.status_l.config(
-                    text="Ready — Paint will open the original image "
-                    "at its source size.")
-            except Exception as exc:
-                self.status_l.config(text=f"Error: {exc}")
             return
 
         self.status_l.config(text="Analysing photo…")
@@ -174,7 +208,7 @@ class App(tk.Tk):
             self._tkimg = ImageTk.PhotoImage(preview)
             self.preview.config(image=self._tkimg, text="")
 
-            total_points = sum(len(points) for _, points in strokes)
+            total_points = sum(len(stroke[-1]) for stroke in strokes)
             self.info_l.config(
                 text=f"{len(strokes)} strokes  •  {total_points:,} points  "
                 f"•  {dimensions[0]}×{dimensions[1]} px")
@@ -184,53 +218,41 @@ class App(tk.Tk):
 
     def _start(self):
         if not self.image_path:
-            messagebox.showwarning("No image", "Upload a photo first.")
+            self._show_message("No image", "Upload a photo first.", "warning")
             return
-        mode = self.mode_v.get()
-        if mode == SKETCH_MODE and not self.strokes:
+        if not self.strokes:
             self._replan()
             if not self.strokes:
                 return
 
-        if mode == EXACT_IMAGE_MODE:
-            prompt = (
-                "Open the original image in Microsoft Paint at its original "
-                "pixel dimensions?\n\n"
-                "This displays the exact uploaded image; it is not "
-                "AI-redrawn."
-            )
-        else:
-            prompt = (
-                "The robot will open Paint and draw an approximate pencil "
-                "sketch with mouse strokes.\n\n"
-                "Press ESC at any time to stop. Press SPACE to pause or "
-                "resume."
-            )
-        if not messagebox.askyesno("Start", prompt):
+        prompt = (
+            "The robot will open Paint and draw an approximate pencil "
+            "sketch with mouse strokes.\n\n"
+            "Press ESC at any time to stop. Press SPACE to pause or "
+            "resume."
+        )
+        if not self._ask_yes_no("Start", prompt):
             return
 
         config = dict(
-            mode=mode,
-            image_path=self.image_path,
             strokes=self.strokes,
             dim=self.stroke_dim,
             speed=self.speed_v.get(),
         )
-        if mode == SKETCH_MODE:
-            width, height = self.stroke_dim
-            preview_scale = min(500 / width, 320 / height, 1.0)
-            blank = Image.new(
-                "RGB",
-                (max(1, int(width * preview_scale)),
-                 max(1, int(height * preview_scale))),
-                "white",
-            )
-            self._tkimg = ImageTk.PhotoImage(blank)
-            self.preview.config(image=self._tkimg, text="")
-            self.stage_l.config(text="Stage: Preparing…")
-            self.eta_l.config(text="Remaining: calculating…")
-            self.status_l.config(
-                text="Drawing strokes live in Paint and updating the preview.")
+        width, height = self.stroke_dim
+        preview_scale = min(500 / width, 320 / height, 1.0)
+        blank = Image.new(
+            "RGB",
+            (max(1, int(width * preview_scale)),
+             max(1, int(height * preview_scale))),
+            "white",
+        )
+        self._tkimg = ImageTk.PhotoImage(blank)
+        self.preview.config(image=self._tkimg, text="")
+        self.stage_l.config(text="Stage: Preparing…")
+        self.eta_l.config(text="Remaining: calculating…")
+        self.status_l.config(
+            text="Drawing strokes live in Paint and updating the preview.")
         self.robot = Robot(config, self.q)
         self.robot.start()
         self.b_start.config(state="disabled")
@@ -250,7 +272,7 @@ class App(tk.Tk):
         if self.robot and self.robot.is_alive():
             if (self.robot.paint_hwnd
                     and not focus_paint(self.robot.paint_hwnd)):
-                messagebox.showerror(
+                self._show_message(
                     "Paint not focused",
                     "Could not return to Paint. Bring it to the foreground "
                     "and try Resume again.",
@@ -303,7 +325,7 @@ class App(tk.Tk):
                 elif kind == "error":
                     self.status_l.config(text=f"Error: {message[1]}")
                     self._finish()
-                    messagebox.showerror("Error", message[1])
+                    self._show_message("Error", message[1])
         except queue.Empty:
             pass
         self.after(80, self._poll)

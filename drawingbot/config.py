@@ -10,6 +10,26 @@ STAGES = [
     "Final Details",
 ]
 
+AUTO_LINE_WIDTHS = {
+    0: 3,
+    1: 2,
+    2: 1,
+    3: 1,
+    4: 2,
+    5: 2,
+    6: 1,
+}
+
+LINE_WIDTH_RANGES = {
+    0: (2, 4),
+    1: (1, 3),
+    2: (1, 2),
+    3: (1, 2),
+    4: (1, 3),
+    5: (2, 4),
+    6: (1, 2),
+}
+
 STYLES = {
     "Realistic Pencil Portrait": [0, 1, 2, 3, 4, 5, 6],
     "Light Sketch":              [0, 1, 2, 4, 6],
@@ -27,6 +47,3 @@ QUALITY = {
     "Standard": (600, 1.2),
     "High":     (800, 1.0),
 }
-
-EXACT_IMAGE_MODE = "Open Original Image (No Drawing)"
-SKETCH_MODE = "Pencil Sketch (Approximate)"

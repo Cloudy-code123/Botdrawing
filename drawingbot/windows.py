@@ -60,6 +60,8 @@ _u32.IsWindowVisible.argtypes = [wt.HWND]
 _u32.IsWindowVisible.restype = wt.BOOL
 _u32.IsWindow.argtypes = [wt.HWND]
 _u32.IsWindow.restype = wt.BOOL
+_u32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
+_u32.GetWindowRect.restype = wt.BOOL
 _u32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
 _u32.ShowWindow.restype = wt.BOOL
 _u32.SetForegroundWindow.argtypes = [wt.HWND]
@@ -70,6 +72,10 @@ _u32.SetWindowPos.argtypes = [
     wt.UINT,
 ]
 _u32.SetWindowPos.restype = wt.BOOL
+_u32.SendMessageW.argtypes = [
+    wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM,
+]
+_u32.SendMessageW.restype = wt.LPARAM
 _u32.SendInput.argtypes = [
     wt.UINT, ctypes.POINTER(_Input), ctypes.c_int,
 ]
@@ -77,6 +83,10 @@ _u32.SendInput.restype = wt.UINT
 
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
+WM_HSCROLL = 0x0114
+WM_VSCROLL = 0x0115
+SB_LEFT = 6
+SB_TOP = 6
 
 
 def screen_size():
@@ -109,6 +119,23 @@ def mouse_down(x, y):
 
 def mouse_up():
     _send_mouse_input(MOUSEEVENTF_LEFTUP)
+
+
+def set_paint_brush_size(hwnd, size, current_size):
+    if not hwnd or not _u32.IsWindow(hwnd):
+        raise RuntimeError("Paint is not available for brush-size selection.")
+    if size < 1 or current_size < 1:
+        raise ValueError("Paint brush sizes must be positive.")
+    if (_u32.GetForegroundWindow() != hwnd
+            and not focus_paint(hwnd, maximize=False)):
+        raise RuntimeError(
+            "Paint could not be brought to the foreground to change line size."
+        )
+
+    key = "add" if size > current_size else "subtract"
+    for _ in range(abs(size - current_size)):
+        pyautogui.hotkey("ctrl", key)
+    time.sleep(0.04)
 
 
 def key_down(virtual_key):
@@ -224,6 +251,26 @@ def focus_paint(hwnd, maximize=True):
         time.sleep(0.3)
         return _u32.GetForegroundWindow() == hwnd
     return False
+
+
+def prepare_paint_canvas(hwnd):
+    """Reset Paint scrollbars and zoom before locating the drawing canvas."""
+    if not hwnd or not _u32.IsWindow(hwnd):
+        raise RuntimeError("Paint is not available for canvas preparation.")
+
+    if not focus_paint(hwnd, maximize=False):
+        raise RuntimeError(
+            "Paint could not be brought to the foreground for canvas setup."
+        )
+
+    _u32.SendMessageW(hwnd, WM_HSCROLL, SB_LEFT, 0)
+    _u32.SendMessageW(hwnd, WM_VSCROLL, SB_TOP, 0)
+
+    pyautogui.hotkey("ctrl", "1")
+    time.sleep(0.5)
+
+    _u32.SendMessageW(hwnd, WM_HSCROLL, SB_LEFT, 0)
+    _u32.SendMessageW(hwnd, WM_VSCROLL, SB_TOP, 0)
 
 
 def create_blank_canvas(size):

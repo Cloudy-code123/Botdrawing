@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 import pyautogui
 
-from .config import EXACT_IMAGE_MODE, SPEEDS, STAGES
+from .config import SPEEDS, STAGES
+from .planning import adaptive_line_width
 from .windows import (
     VK_ESCAPE,
     VK_SPACE,
@@ -22,6 +23,8 @@ from .windows import (
     mouse_move,
     mouse_up,
     paint_canvas_box,
+    prepare_paint_canvas,
+    set_paint_brush_size,
 )
 
 
@@ -89,23 +92,6 @@ class Robot(threading.Thread):
 
     def run(self):
         try:
-            if self.cfg["mode"] == EXACT_IMAGE_MODE:
-                image_path = self.cfg["image_path"]
-                self.msg("status", "Opening the original image in Paint…")
-                hwnd = launch_paint(image_path)
-                if not hwnd:
-                    raise RuntimeError(
-                        "Paint opened, but its window for the uploaded image "
-                        "could not be found."
-                    )
-                if not focus_paint(hwnd, maximize=False):
-                    raise RuntimeError(
-                        "The image opened in Paint, but Paint could not be "
-                        "brought to the foreground."
-                    )
-                self.msg("done", "Original image opened in Paint unchanged.")
-                return
-
             strokes = self.cfg["strokes"]
             image_width, image_height = self.cfg["dim"]
             speed = self.cfg["speed"]
@@ -124,7 +110,7 @@ class Robot(threading.Thread):
                         "foreground."
                     )
                 self.paint_hwnd = hwnd
-                time.sleep(0.3)
+                prepare_paint_canvas(hwnd)
                 box = paint_canvas_box(canvas_size)
             finally:
                 os.remove(canvas_path)
@@ -172,11 +158,12 @@ class Robot(threading.Thread):
         preview_height = max(1, int(image_height * preview_scale))
         preview_canvas = np.full(
             (preview_height, preview_width, 3), 255, np.uint8)
-        total = sum(len(points) for _, points in strokes)
+        total = sum(len(stroke[-1]) for stroke in strokes)
         done = 0
         start_time = time.time()
         last_preview = 0.0
         last_stage = -1
+        last_brush_size = 1
 
         def clamp(x, y):
             return (
@@ -184,12 +171,21 @@ class Robot(threading.Thread):
                 min(max(y, box_top), box_bottom),
             )
 
-        for stage, points in strokes:
+        for stroke in strokes:
+            stage, points = stroke
+
             self._check()
 
             if stage != last_stage:
                 last_stage = stage
                 self.msg("stage", STAGES[stage])
+
+            brush_size = adaptive_line_width(
+                stage, points, image_width, image_height)
+            if brush_size != last_brush_size:
+                set_paint_brush_size(
+                    self.paint_hwnd, brush_size, last_brush_size)
+                last_brush_size = brush_size
 
             mapped = points * scale + (offset_x, offset_y)
 
@@ -199,10 +195,7 @@ class Robot(threading.Thread):
                 for index in range(1, count + 1):
                     dense.append(start + (end - start) * index / count)
 
-            dense = [
-                clamp(*(point + np.random.normal(0, 0.3, 2)))
-                for point in dense
-            ]
+            dense = [clamp(*point) for point in dense]
 
             start_x, start_y = dense[0]
             mouse_move(start_x, start_y)
@@ -223,9 +216,16 @@ class Robot(threading.Thread):
 
             preview_points = np.rint(
                 points * preview_scale).astype(np.int32)
+            preview_color = (40, 40, 40)
+            preview_thickness = max(
+                1,
+                int(round(adaptive_line_width(
+                    stage, points, image_width, image_height)
+                    * preview_scale)),
+            )
             cv2.polylines(
                 preview_canvas, [preview_points], False,
-                (40, 40, 40), 1, cv2.LINE_AA)
+                preview_color, preview_thickness, cv2.LINE_AA)
             done += len(points)
             elapsed = time.time() - start_time
             now = time.time()

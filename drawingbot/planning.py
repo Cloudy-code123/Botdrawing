@@ -7,11 +7,65 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .config import QUALITY, STYLES
+from .config import (
+    AUTO_LINE_WIDTHS,
+    LINE_WIDTH_RANGES,
+    QUALITY,
+    STYLES,
+)
+
+
+def adaptive_line_width(stage, points, image_width, image_height):
+    """Estimate a Paint brush size from the stroke length and drawing stage."""
+    if points is None or len(points) < 2:
+        return AUTO_LINE_WIDTHS[stage]
+
+    points = np.asarray(points, dtype=np.float32)
+    segments = np.diff(points, axis=0)
+    segment_lengths = np.linalg.norm(segments, axis=1)
+    path_length = float(np.sum(segment_lengths))
+    if path_length <= 0:
+        return AUTO_LINE_WIDTHS[stage]
+
+    diagonal = math.hypot(image_width, image_height)
+    normalized_length = path_length / max(diagonal, 1.0)
+    median_segment = float(np.median(segment_lengths))
+    normalized_segment = median_segment / max(diagonal, 1.0)
+    bounds = np.ptp(points, axis=0)
+    bounding_span = max(float(np.linalg.norm(bounds)), 1.0)
+    complexity = path_length / bounding_span
+
+    if (normalized_length < 0.018
+            or normalized_segment < 0.002
+            or complexity < 1.08):
+        adjustment = -1
+    elif (normalized_length > 0.12
+            or normalized_segment > 0.018
+            or complexity > 2.5):
+        adjustment = 1
+    else:
+        adjustment = 0
+
+    minimum, maximum = LINE_WIDTH_RANGES[stage]
+    width = min(maximum, max(
+        minimum, AUTO_LINE_WIDTHS[stage] + adjustment))
+    return width
 
 
 def _order_paths(paths, limit=3000):
     paths = sorted(paths, key=len, reverse=True)[:limit]
+    if not paths:
+        return []
+    cleaned = []
+    for path in paths:
+        path = np.asarray(path, dtype=np.float64)
+        if len(path) >= 2:
+            keep = np.r_[True, np.linalg.norm(
+                np.diff(path, axis=0), axis=1) >= 0.8]
+            path = path[keep]
+            if len(path) >= 2:
+                cleaned.append(path)
+    paths = cleaned
     if not paths:
         return []
     starts = np.array([p[0] for p in paths], float)
@@ -40,8 +94,30 @@ def _contour_paths(edges, min_len, eps):
             approx = cv2.approxPolyDP(
                 contour, eps, False).reshape(-1, 2)
             if len(approx) >= 2:
-                result.append(approx)
+                result.append(_smooth_path(approx, iterations=2))
     return _order_paths(result)
+
+
+def _smooth_path(points, iterations=2):
+    """Smooth noisy edges while keeping their overall shape."""
+    points = np.asarray(points, dtype=np.float32)
+    if len(points) < 3:
+        return points.astype(np.float64)
+
+    points = cv2.approxPolyDP(
+        points.reshape(-1, 1, 2), 0.7, False
+    ).reshape(-1, 2)
+    if len(points) < 3:
+        return points.astype(np.float64)
+
+    for _ in range(iterations):
+        smoothed = [points[0]]
+        for start, end in zip(points[:-1], points[1:]):
+            smoothed.append(start * 0.75 + end * 0.25)
+            smoothed.append(start * 0.25 + end * 0.75)
+        smoothed.append(points[-1])
+        points = np.asarray(smoothed, dtype=np.float32)
+    return points.astype(np.float64)
 
 
 def _hatch(gray, angle, spacing, threshold):
@@ -122,8 +198,13 @@ def plan_drawing(path, style, quality):
     enabled_stages = STYLES[style]
     plan = {}
 
+    clean_edges = cv2.morphologyEx(
+        cv2.Canny(cv2.GaussianBlur(gray, (0, 0), 6), 15, 45),
+        cv2.MORPH_CLOSE,
+        np.ones((3, 3), dtype=np.uint8),
+    )
     plan[0] = _contour_paths(
-        cv2.Canny(cv2.GaussianBlur(gray, (0, 0), 6), 15, 45), 40, 4.0)
+        clean_edges, 55, 5.0)
     plan[1] = _contour_paths(cv2.Canny(soft, 50, 130), 25, 2.0)
 
     face_edges = []
@@ -141,14 +222,14 @@ def plan_drawing(path, style, quality):
     plan[2] = face_edges
 
     plan[3] = _hair_strokes(
-        gray, 105, max(4, int(5 * spacing_factor)))
+        gray, 105, max(6, int(7 * spacing_factor)))
     plan[4] = (
-        _hatch(soft, 45, 7 * spacing_factor, 205)
-        + _hatch(soft, 45, 7 * spacing_factor, 165)
+        _hatch(soft, 45, 9 * spacing_factor, 195)
+        + _hatch(soft, 135, 11 * spacing_factor, 155)
     )
     plan[5] = (
-        _hatch(soft, 135, 5 * spacing_factor, 120)
-        + _hatch(soft, 20, 4 * spacing_factor, 70)
+        _hatch(soft, 135, 7 * spacing_factor, 115)
+        + _hatch(soft, 20, 6 * spacing_factor, 65)
     )
     plan[6] = _contour_paths(cv2.Canny(gray, 90, 190), 25, 1.5)
 
@@ -163,14 +244,19 @@ def plan_drawing(path, style, quality):
 
 
 def render_preview(strokes, width, height, max_size=(500, 320)):
-    canvas = np.full((height, width, 3), 255, np.uint8)
-    for _, points in strokes:
-        cv2.polylines(
-            canvas, [points.astype(np.int32)], False,
-            (40, 40, 40), 1, cv2.LINE_AA)
     scale = min(max_size[0] / width, max_size[1] / height, 1.0)
     display_width = max(1, int(width * scale))
     display_height = max(1, int(height * scale))
-    return Image.fromarray(cv2.resize(
-        canvas, (display_width, display_height),
-        interpolation=cv2.INTER_AREA))
+    canvas = np.full((display_height, display_width, 3), 255, np.uint8)
+    for stroke in strokes:
+        stage, points = stroke
+        thickness = max(
+            1,
+            int(round(adaptive_line_width(
+                stage, points, width, height) * scale)),
+        )
+        preview_points = np.rint(points * scale).astype(np.int32)
+        cv2.polylines(
+            canvas, [preview_points], False,
+            (40, 40, 40), thickness, cv2.LINE_AA)
+    return Image.fromarray(canvas)
