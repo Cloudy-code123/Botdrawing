@@ -68,5 +68,3 @@ opens the uploaded file unchanged and does not draw.
 - **Draft / Standard / High**: set the maximum analysis image dimension and
   texture spacing. Higher quality can take longer to plan and draw.
 =======
-# Drawingbot
->>>>>>> e9baae7ae4875ea1640fa2b40ee8a820a93053dd
