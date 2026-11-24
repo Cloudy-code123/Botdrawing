@@ -57,15 +57,3 @@ opens the uploaded file unchanged and does not draw.
 - Closing the app requests a safe stop and waits for the drawing thread to
   release the mouse before exiting.
 - Keep Paint unobstructed while a sketch is being drawn.
-
-## Drawing options
-
-- **Realistic Pencil Portrait**: contours, face-region detail, texture, and
-  tonal hatching.
-- **Light Sketch**: lighter shading with contours and details.
-- **Contour Drawing**: primarily outlines and selected details.
-- **Slow / Normal / Fast**: adjust mouse movement and pauses between strokes.
-- **Draft / Standard / High**: set the maximum analysis image dimension and
-  texture spacing. Higher quality can take longer to plan and draw.
-=======
-
