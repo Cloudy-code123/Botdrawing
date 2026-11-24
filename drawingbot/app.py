@@ -5,6 +5,7 @@ from .dpi import enable_dpi_awareness
 enable_dpi_awareness()
 
 import queue
+import threading
 import tkinter as tk
 from tkinter import filedialog, ttk
 
@@ -33,6 +34,9 @@ class App(tk.Tk):
         self.strokes = None
         self.stroke_dim = None
         self._closing = False
+        self._plan_seq = 0
+        self._plan_busy = False
+        self._plan_pending = None
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         padding = dict(padx=12, pady=5)
@@ -195,26 +199,34 @@ class App(tk.Tk):
     def _replan(self):
         if not self.image_path:
             return
+        self._plan_pending = (
+            self.image_path, self.style_v.get(), self.quality_v.get())
+        self._launch_plan()
 
+    def _launch_plan(self):
+        if self._plan_busy or not self._plan_pending:
+            return
+        path, style, quality = self._plan_pending
+        self._plan_pending = None
+        self._plan_seq += 1
+        seq = self._plan_seq
+        self._plan_busy = True
         self.status_l.config(text="Analysing photo…")
+        self.b_start.config(state="disabled")
         self.update_idletasks()
-        try:
-            strokes, dimensions = plan_drawing(
-                self.image_path, self.style_v.get(), self.quality_v.get())
-            self.strokes = strokes
-            self.stroke_dim = dimensions
 
-            preview = render_preview(strokes, *dimensions)
-            self._tkimg = ImageTk.PhotoImage(preview)
-            self.preview.config(image=self._tkimg, text="")
+        def worker():
+            try:
+                strokes, dimensions = plan_drawing(path, style, quality)
+                preview = render_preview(strokes, *dimensions)
+                total_points = sum(len(stroke[-1]) for stroke in strokes)
+                self.q.put((
+                    "planned", seq, strokes, dimensions, preview,
+                    total_points))
+            except Exception as exc:
+                self.q.put(("plan_error", seq, str(exc)))
 
-            total_points = sum(len(stroke[-1]) for stroke in strokes)
-            self.info_l.config(
-                text=f"{len(strokes)} strokes  •  {total_points:,} points  "
-                f"•  {dimensions[0]}×{dimensions[1]} px")
-            self.status_l.config(text="Ready — click Start Drawing.")
-        except Exception as exc:
-            self.status_l.config(text=f"Error: {exc}")
+        threading.Thread(target=worker, daemon=True).start()
 
     def _start(self):
         if not self.image_path:
@@ -222,8 +234,7 @@ class App(tk.Tk):
             return
         if not self.strokes:
             self._replan()
-            if not self.strokes:
-                return
+            return
 
         prompt = (
             "The robot will open Paint and draw an approximate pencil "
@@ -319,6 +330,28 @@ class App(tk.Tk):
                         self._tkimg = ImageTk.PhotoImage(
                             Image.fromarray(message[3]))
                         self.preview.config(image=self._tkimg, text="")
+                elif kind in ("planned", "plan_error"):
+                    self._plan_busy = False
+                    if message[1] == self._plan_seq:
+                        if kind == "planned":
+                            _, _, strokes, dimensions, preview, total = message
+                            self.strokes = strokes
+                            self.stroke_dim = dimensions
+                            self._tkimg = ImageTk.PhotoImage(preview)
+                            self.preview.config(image=self._tkimg, text="")
+                            self.info_l.config(
+                                text=f"{len(strokes)} strokes  •  "
+                                f"{total:,} points  "
+                                f"•  {dimensions[0]}×{dimensions[1]} px")
+                            self.status_l.config(
+                                text="Ready — click Start Drawing.")
+                        else:
+                            self.strokes = None
+                            self.status_l.config(text=f"Error: {message[2]}")
+                    if not (self.robot and self.robot.is_alive()):
+                        self.b_start.config(state="normal")
+                    if self._plan_pending:
+                        self._launch_plan()
                 elif kind == "done":
                     self.status_l.config(text=message[1])
                     self._finish()
