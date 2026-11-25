@@ -46,7 +46,6 @@ generated. Sketches are not automatically saved. The original-image mode
 opens the uploaded file unchanged and does not draw.
 
 ## Controls and safety
-
 - **Pause / Resume**: use the app buttons or press **Space** while sketching.
 - **Stop**: press **Esc** or use the app's STOP button.
 - **Emergency stop**: move the mouse to a screen corner to trigger PyAutoGUI's
